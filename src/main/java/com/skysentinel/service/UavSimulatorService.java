@@ -1,10 +1,14 @@
 package com.skysentinel.service;
 
+import com.skysentinel.dto.TelemetryResponseDTO;
 import com.skysentinel.model.TelemetryData;
 import com.skysentinel.repository.TelemetryRepository;
+import org.springframework.beans.BeanUtils;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Random;
 import java.util.UUID;
 
@@ -23,8 +27,8 @@ public class UavSimulatorService {
         this.repository = repository;
     }
 
-    // Runs every 1000ms (1 second)
-    @Scheduled(fixedRate = 1000)
+    // Runs every 60000ms (1 min)
+    @Scheduled(fixedRate = 60000)
     public void generateTelemetry() {
         TelemetryData data = new TelemetryData();
         
@@ -49,4 +53,15 @@ public class UavSimulatorService {
                            ", Lon: " + data.getLongitude() + "]");
     }
 
+    public List<TelemetryResponseDTO> getAllTelemetry() {
+        List<TelemetryResponseDTO> responseList = new ArrayList<>();
+        List<TelemetryData> entities = repository.findAll();
+
+        for(TelemetryData entity : entities){
+            TelemetryResponseDTO dto = new TelemetryResponseDTO();
+            BeanUtils.copyProperties(entity,dto);
+            responseList.add(dto);
+        }
+        return responseList;
+    }
 }
