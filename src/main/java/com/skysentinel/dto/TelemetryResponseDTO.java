@@ -14,11 +14,14 @@ import java.util.UUID;
 @NoArgsConstructor
 public class TelemetryResponseDTO {
 
+    private UUID id;
+    private String missionId;
     private double latitude;
     private double longitude;
     private double altitude;
     private double speed;
     private int batteryLevel;
     private boolean isEngineRunning;
+    private LocalDateTime timestamp;
 
 }
