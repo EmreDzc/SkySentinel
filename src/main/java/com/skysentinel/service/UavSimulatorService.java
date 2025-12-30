@@ -1,5 +1,6 @@
 package com.skysentinel.service;
 
+import com.skysentinel.dto.CommandRequestDTO;
 import com.skysentinel.dto.TelemetryResponseDTO;
 import com.skysentinel.model.TelemetryData;
 import com.skysentinel.repository.TelemetryRepository;
@@ -21,38 +22,115 @@ public class UavSimulatorService {
     private final SimpMessagingTemplate messagingTemplate;
     private final Random random = new Random();
 
-    // Start coordinates (Approx. Ankara for realism)
-    private double currentLat = 39.9334;
-    private double currentLon = 32.8597;
+    private final double HOME_LAT = 39.9334;
+    private final double HOME_LON = 32.8597;
 
-    // Runs every 60000ms (1 min)
-    @Scheduled(fixedRate = 5000)
+    private double currentLat = HOME_LAT;
+    private double currentLon = HOME_LON;
+    private double currentAlt = 0; // Yerde başlasın
+    private double currentSpeed = 0;
+    private boolean isEngineRunning = false;
+    private int batteryLevel = 100;
+
+    private double targetAltitude = 1000.0;
+    private boolean isReturnToHome = false;
+    private boolean isEmergencyLanding = false;
+
+    public void executeCommand(CommandRequestDTO command) {
+        log.info("Komut Alındı: {} - Değer: {}", command.getCommandType(), command.getValue());
+        switch (command.getCommandType()) {
+            case "TAKEOFF":
+                if (!isEngineRunning) {
+                    isEngineRunning = true;
+                    targetAltitude = 1000.0;
+                    isEmergencyLanding = false;
+                    isReturnToHome = false;
+                }
+                break;
+            case "LAND":
+                isEmergencyLanding = true;
+                isReturnToHome = false;
+                break;
+            case "RTH":
+                isReturnToHome = true;
+                isEmergencyLanding = false;
+                targetAltitude = 1000.0;
+                break;
+            case "CHANGE_ALTITUDE":
+                if (command.getValue() != null) {
+                    targetAltitude = command.getValue();
+                }
+                break;
+        }
+    }
+
+    @Scheduled(fixedRate = 10000)
     public void generateTelemetry() {
-        TelemetryData data = new TelemetryData();
-        
-        // 1. Simulate Movement (adding small random variations)
-        currentLat += (random.nextDouble() - 0.5) * 0.001; 
-        currentLon += (random.nextDouble() - 0.5) * 0.001;
+        if (!isEngineRunning && currentAlt <= 0) {
+            broadcastTelemetry();
+            return;
+        }
+        if (isEmergencyLanding) {
+            targetAltitude = 0;
+        }
+        if (currentAlt < targetAltitude) {
+            currentAlt += 10 + random.nextDouble() * 5;
+        } else if (currentAlt > targetAltitude) {
+            currentAlt -= 10 + random.nextDouble() * 5;
+        }
+        if (currentAlt <= 0) {
+            currentAlt = 0;
+            if (isEmergencyLanding) {
+                isEngineRunning = false;
+                currentSpeed = 0;
+            }
+        }
+        if (isEngineRunning && currentAlt > 10) {
+            if (isReturnToHome) {
+                double latDiff = HOME_LAT - currentLat;
+                double lonDiff = HOME_LON - currentLon;
 
-        // 2. Populate Data
-        data.setMissionId("M-101"); // Fixed mission ID for now
+                currentLat += latDiff * 0.05;
+                currentLon += lonDiff * 0.05;
+                currentSpeed = 60.0;
+                if (Math.abs(latDiff) < 0.0001 && Math.abs(lonDiff) < 0.0001) {
+                    isEmergencyLanding = true;
+                }
+            } else if (!isEmergencyLanding) {
+                currentLat += (random.nextDouble() - 0.5) * 0.0005;
+                currentLon += (random.nextDouble() - 0.5) * 0.0005;
+                currentSpeed = 85 + random.nextDouble() * 10;
+            } else {
+                currentSpeed = currentSpeed * 0.9;
+            }
+        }
+        if (isEngineRunning && batteryLevel > 0) {
+            if (random.nextInt(100) < 5) batteryLevel--;
+        }
+
+        broadcastTelemetry();
+    }
+
+    private void broadcastTelemetry() {
+        TelemetryData data = new TelemetryData();
+        data.setMissionId("M-101");
         data.setLatitude(currentLat);
         data.setLongitude(currentLon);
-        data.setAltitude(1000 + random.nextDouble() * 10); // Fluctuates around 1000m
-        data.setSpeed(85 + random.nextDouble() * 5);       // Fluctuates around 85 km/h
-        data.setBatteryLevel(random.nextInt(100));         // Random battery for now
-        data.setEngineRunning(true);
+        data.setAltitude(currentAlt);
+        data.setSpeed(currentSpeed);
+        data.setBatteryLevel(batteryLevel);
+        data.setEngineRunning(isEngineRunning);
 
         repository.save(data);
         messagingTemplate.convertAndSend("/topic/telemetry", data);
 
-        log.info("Data Saved & Broadcasted! [Lat: {}]", data.getLatitude());
+        log.info("Telemetry: Alt={}, Lat={}, Mode={}", String.format("%.2f", currentAlt), currentLat,
+                isReturnToHome ? "RTH" : (isEmergencyLanding ? "LANDING" : "NORMAL"));
     }
 
     public List<TelemetryResponseDTO> getAllTelemetry() {
         List<TelemetryResponseDTO> responseList = new ArrayList<>();
         List<TelemetryData> entities = repository.findAll();
-
         for(TelemetryData entity : entities){
             TelemetryResponseDTO dto = new TelemetryResponseDTO();
             BeanUtils.copyProperties(entity,dto);
